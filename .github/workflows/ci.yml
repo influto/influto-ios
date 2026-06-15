@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Compile-and-test gate for the InfluTo Swift package. No code signing and no
+# secrets are needed: this builds + runs the XCTest unit tests on an iOS
+# Simulator (the real iOS 16 target), which is the authoritative "does it
+# compile for iOS" answer. Device/TestFlight builds are a separate, later
+# workflow that adds signing.
+jobs:
+  ios:
+    name: Build & test (iOS Simulator)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun simctl list devices available | grep -i iphone || true
+
+      - name: Build & test on iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme InfluTo \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -skipPackagePluginValidation
+
+  sample:
+    name: Sample app + StoreKit E2E
+    # The macOS sample build is expensive (10x minutes on private repos). Run it on
+    # PRs + manual dispatch, not every push to main — the fast SPM `ios` job above
+    # still gates every push.
+    if: github.event_name != 'push'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Bake the E2E secrets into the test bundle (xcodebuild test won't reliably
+      # forward CI env vars into the simulator's XCTest process). The filled file is
+      # never committed — it exists only on the runner.
+      - name: Inject E2E secrets
+        # The live E2E (real prod round-trips, slow) runs ONLY on manual dispatch; on
+        # PRs the secrets stay empty so the E2E test XCTSkips (build + Layer-1 only).
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          K: ${{ secrets.INFLUTO_TEST_API_KEY }}
+          R: ${{ secrets.INFLUTO_TEST_REFERRAL_CODE }}
+          P: ${{ secrets.INFLUTO_TEST_PRODUCT_ID }}
+          B: ${{ secrets.INFLUTO_TEST_BASE_URL }}
+        run: |
+          {
+            echo 'enum E2ESecrets {'
+            echo "    static let apiKey = \"${K}\""
+            echo "    static let referralCode = \"${R}\""
+            echo "    static let productID = \"${P}\""
+            echo "    static let baseURL = \"${B}\""
+            echo '}'
+          } > Sample/Tests/InfluToSampleTests/E2ESecrets.swift
+          echo "wrote E2ESecrets.swift (apiKey ${#K} chars)"
+
+      - name: Generate Xcode project
+        working-directory: Sample
+        run: xcodegen generate
+
+      # Layer 1 (always): builds the sample + runs the StoreKit-Testing purchase
+      # test (no secrets, no signing). Layer 2 (the live E2E against the InfluTo
+      # backend) runs only when the INFLUTO_TEST_* repo secrets are set; otherwise
+      # it XCTSkips. No code signing is needed for a simulator test run.
+      - name: Build & test sample (iOS Simulator)
+        working-directory: Sample
+        run: |
+          set -o pipefail
+          # Pick an available iPhone simulator UDID (robust against runner image drift —
+          # a pinned 'name=iPhone 16,OS=latest' can transiently fail to resolve).
+          UDID=$(xcrun simctl list devices available | grep "iPhone" | grep -oE '[0-9A-Fa-f-]{36}' | head -1)
+          echo "Using iOS Simulator: $UDID"
+          xcodebuild test \
+            -project InfluToSample.xcodeproj \
+            -scheme InfluToSample \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 600
