@@ -65,10 +65,16 @@ schemes:
       targets:
         InfluToSample: all
         InfluToSampleTests: [test]
-    # The SKTestSession is created in code from the bundled Products.storekit, so
-    # we do NOT rely on a scheme-level StoreKit configuration (which xcodebuild
-    # does not reliably push to the simulator from the CLI).
+    # The SKTestSession is created in code from the bundled Products.storekit
+    # (reliable under CLI xcodebuild on Xcode ≤ 16). Xcode 26 additionally
+    # requires the scheme-level StoreKit configuration: without it the test
+    # runner lacks the StoreKit-Testing entitlement and every SKTestSession
+    # call fails with SKInternalErrorDomain Code=3 / purchases "notEntitled".
+    # Both mechanisms coexist; the in-code session still drives the tests.
+    run:
+      storeKitConfiguration: Products.storekit
     test:
       targets:
         - InfluToSampleTests
       gatherCoverageData: false
+      storeKitConfiguration: Products.storekit
