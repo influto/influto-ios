@@ -100,7 +100,7 @@ public enum InfluTo {
 /// The actor that owns all SDK state. Actor isolation serializes access to the config,
 /// HTTP client, and storage (the modern replacement for a module-level singleton).
 public actor InfluToActor {
-    private let sdkVersion = "1.0.0"
+    private let sdkVersion = "1.1.0"
 
     private var config: InfluToConfig?
     private var api: APIClient?
@@ -167,7 +167,8 @@ public actor InfluToActor {
                let attribution = try? storedDecoder.decode(AttributionResult.self, from: data) {
                 return attribution
             }
-            let device = await DeviceInfo.trackInstallBody()
+            var device = await DeviceInfo.trackInstallBody()
+            device["device_id"] = installId(storage)
             let resp: AttributionResult = try await api.post(
                 "/sdk/track-install", body: device.mapValues { $0 as Any }
             )
@@ -180,11 +181,49 @@ public actor InfluToActor {
                 setRevenueCatAttributes(code)
                 return resp
             }
-            return AttributionResult(attributed: false, message: resp.message ?? "No attribution found")
+            // Persist the ORGANIC result too (contract 1.6.0): persisting only
+            // attributed results made every organic user re-POST track-install
+            // on every cold start. A thrown request (catch) persists nothing,
+            // so a failed attempt retries on the next launch.
+            let organic = AttributionResult(attributed: false, message: resp.message ?? "No attribution found")
+            if let data = try? storedEncoder.encode(organic),
+               let json = String(data: data, encoding: .utf8) {
+                storage.set(json, Storage.attribution)
+            }
+            return organic
         } catch {
             log("checkAttribution error: \(error)")
             return AttributionResult(attributed: false, message: "Error checking attribution")
         }
+    }
+
+    /// Per-install UUID, generated once and persisted (UserDefaults suite).
+    private func installId(_ storage: Storage) -> String {
+        if let existing = storage.string(Storage.installId) { return existing }
+        let fresh = UUID().uuidString.lowercased()
+        storage.set(fresh, Storage.installId)
+        return fresh
+    }
+
+    /// Once-only monetization events get a DETERMINISTIC id from
+    /// (type, user, sorted properties) so cross-launch re-fires collapse
+    /// server-side; other events get a random uuid.
+    static func defaultEventId(
+        eventType: String, appUserId: String, properties: [String: Any]?
+    ) -> String {
+        let onceOnly = ["trial_started", "subscription_purchased", "subscription_renewed"]
+        guard onceOnly.contains(eventType) else { return UUID().uuidString.lowercased() }
+        let canonical = (properties ?? [:])
+            .map { "\($0.key)=\($0.value)" }
+            .sorted()
+            .joined(separator: "&")
+        var h: UInt32 = 0x811c9dc5
+        for byte in canonical.utf8 {
+            h ^= UInt32(byte)
+            h = h &* 0x01000193
+        }
+        let hex = String(format: "%08x", h)
+        return "det:\(eventType):\(appUserId):\(hex)"
     }
 
     // ----------------------------------------------------------------- identifyUser
@@ -208,7 +247,11 @@ public actor InfluToActor {
         var body: [String: Any] = [
             "eventType": options.eventType,
             "appUserId": options.appUserId,
-            "eventId": options.eventId ?? UUID().uuidString.lowercased(),
+            "eventId": options.eventId ?? Self.defaultEventId(
+                eventType: options.eventType,
+                appUserId: options.appUserId,
+                properties: options.properties
+            ),
         ]
         if let props = options.properties { body["properties"] = anyCodableMapToJSON(props) }
         if let code = options.referralCode { body["referralCode"] = code }

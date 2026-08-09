@@ -9,6 +9,8 @@ final class Storage {
     static let appUserId = "@influto/app_user_id"
     static let initialized = "@influto/initialized"
     static let access = "@influto/access"
+    /// Per-install UUID sent as device_id — backend counts devices, not launches.
+    static let installId = "@influto/install_id"
     /// Set of store identifiers (Apple `originalTransactionId`) already auto-reported, so
     /// opt-in observation/back-sync never re-reports across launches. Stored as a JSON
     /// array of strings under one key. Additive — NOT part of the byte-identical 4-key set.

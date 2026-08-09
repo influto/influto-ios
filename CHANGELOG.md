@@ -4,6 +4,22 @@ All notable changes to the InfluTo iOS SDK are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-09
+
+### Fixed
+- `checkAttribution()` no longer re-fires `/sdk/track-install` on every cold
+  start for organic users: the organic (non-attributed) result is now persisted
+  like the attributed one (contract 1.6.0). A failed request still retries on
+  the next launch.
+
+### Added
+- Persisted per-install UUID (`@influto/install_id`) sent as `device_id`, so
+  the backend counts unique devices instead of launches. No permissions, no
+  fingerprinting; resets on reinstall by design.
+- Deterministic `eventId` for once-only monetization events (`trial_started`,
+  `subscription_purchased`, `subscription_renewed`) derived from
+  (event type, user, properties) — cross-launch re-fires collapse server-side.
+
 ## [1.0.0] - 2026-06-15
 
 ### Added
