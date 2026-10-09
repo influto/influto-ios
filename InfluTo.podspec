@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'InfluTo'
-  s.version          = '1.0.0'
+  s.version          = '1.1.1'
   s.summary          = 'InfluTo influencer attribution + store-direct purchase validation.'
   s.homepage         = 'https://influ.to'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }

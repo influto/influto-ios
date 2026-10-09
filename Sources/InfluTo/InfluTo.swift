@@ -100,7 +100,7 @@ public enum InfluTo {
 /// The actor that owns all SDK state. Actor isolation serializes access to the config,
 /// HTTP client, and storage (the modern replacement for a module-level singleton).
 public actor InfluToActor {
-    private let sdkVersion = "1.1.0"
+    private let sdkVersion = "1.1.1"
 
     private var config: InfluToConfig?
     private var api: APIClient?
@@ -109,6 +109,13 @@ public actor InfluToActor {
     /// Retained `Transaction.updates` observation task (opt-in auto-capture). `nil` unless
     /// `startPurchaseObservation()` is active. Actor-isolated so start/stop are serialized.
     private var observationTask: Task<Void, Never>?
+    /// "App became active" observer token while auto-capture runs (iOS/tvOS/visionOS only).
+    /// `Transaction.updates` does not deliver purchases completed in-app via
+    /// `product.purchase()`, so the back-sync is re-run on activation to report them without
+    /// waiting for the next launch. Reports are deduped locally and idempotent server-side.
+    private var didBecomeActiveObserver: NSObjectProtocol?
+    private var foregroundSyncRunning = false
+    private var foregroundSyncPending = false
     /// In-memory positive cache for `checkAccess` (uid, result, fetched-at). ~5 min TTL.
     private var accessCache: (uid: String, result: AccessResult, at: Date)?
 
@@ -362,29 +369,39 @@ public actor InfluToActor {
 
     // --------------------------------------------------------------- setReferralCode
 
+    /// Records a manually entered code with the backend. Only once the backend accepts it
+    /// (`success == true`) is the code stored locally and written to RevenueCat, so a
+    /// rejected code is never stored or tagged. `appUserId` defaults to the user stored by
+    /// `identifyUser` — free-access codes need one (`MISSING_USER_ID` otherwise).
     public func setReferralCode(_ code: String, appUserId: String? = nil) async -> SetCodeResult {
         guard initialized, let api, let storage else {
             return SetCodeResult(success: false, code: nil, message: "SDK not initialized", campaign: nil)
         }
         let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         do {
-            storage.set(normalized, Storage.influtoCode)
-            let attribution = AttributionResult(
-                attributed: true, referralCode: normalized, attributionMethod: "manual_entry",
-                clickedAt: iso8601Now(), message: "Manually entered code"
-            )
-            if let data = try? storedEncoder.encode(attribution),
-               let json = String(data: data, encoding: .utf8) {
-                storage.set(json, Storage.attribution)
-            }
-            setRevenueCatAttributes(normalized)
-
             var body: [String: Any] = ["code": normalized]
             if let appUserId {
-                body["app_user_id"] = appUserId
                 storage.set(appUserId, Storage.appUserId)
             }
-            return try await api.post("/sdk/set-referral-code", body: body)
+            if let uid = appUserId ?? storage.string(Storage.appUserId) {
+                body["app_user_id"] = uid
+            }
+            let result: SetCodeResult = try await api.post("/sdk/set-referral-code", body: body)
+            if result.success {
+                // Prefer the canonical (matched) code the backend returns over the typed input.
+                let accepted = result.code.flatMap { $0.isEmpty ? nil : $0 } ?? normalized
+                storage.set(accepted, Storage.influtoCode)
+                let attribution = AttributionResult(
+                    attributed: true, referralCode: accepted, attributionMethod: "manual_entry",
+                    clickedAt: iso8601Now(), message: "Manually entered code"
+                )
+                if let data = try? storedEncoder.encode(attribution),
+                   let json = String(data: data, encoding: .utf8) {
+                    storage.set(json, Storage.attribution)
+                }
+                setRevenueCatAttributes(accepted)
+            }
+            return result
         } catch {
             log("setReferralCode error: \(error)")
             return SetCodeResult(success: false, code: nil, message: "Failed to set code", campaign: nil)
@@ -440,6 +457,7 @@ public actor InfluToActor {
                 await self?.handleObservedTransaction(verification)
             }
         }
+        startForegroundResync()
         log("purchase observation started")
     }
 
@@ -448,7 +466,53 @@ public actor InfluToActor {
     public func stopPurchaseObservation() {
         observationTask?.cancel()
         observationTask = nil
+        stopForegroundResync()
         log("purchase observation stopped")
+    }
+
+    /// Re-run the back-sync whenever the app becomes active, while observation is on. No-op on
+    /// platforms without UIKit's app lifecycle (macOS, watchOS).
+    @available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, *)
+    private func startForegroundResync() {
+        #if canImport(UIKit) && !os(watchOS)
+        guard didBecomeActiveObserver == nil else { return }
+        // The raw value of `UIApplication.didBecomeActiveNotification`, spelled out so this actor
+        // never references a main-actor-isolated UIKit symbol (and needs no UIKit import).
+        let didBecomeActive = Notification.Name("UIApplicationDidBecomeActiveNotification")
+        didBecomeActiveObserver = NotificationCenter.default.addObserver(
+            forName: didBecomeActive, object: nil, queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { await self.foregroundResync() }
+        }
+        #endif
+    }
+
+    private func stopForegroundResync() {
+        if let observer = didBecomeActiveObserver {
+            NotificationCenter.default.removeObserver(observer)
+            didBecomeActiveObserver = nil
+        }
+    }
+
+    /// Coalesced back-sync on app activation: at most one run at a time; an activation during a
+    /// run schedules exactly one more. Already-reported transactions are skipped locally.
+    @available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, *)
+    private func foregroundResync() async {
+        guard observationTask != nil else { return }
+        if foregroundSyncRunning {
+            foregroundSyncPending = true
+            return
+        }
+        foregroundSyncRunning = true
+        defer { foregroundSyncRunning = false }
+        repeat {
+            foregroundSyncPending = false
+            // Give StoreKit a moment to record a purchase that just completed in-app.
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard observationTask != nil else { return }
+            _ = await syncExistingPurchases()
+        } while foregroundSyncPending
     }
 
     /// One-shot back-sync of existing/unfinished transactions, reporting each not-yet-sent

@@ -4,6 +4,30 @@ All notable changes to the InfluTo iOS SDK are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-10-09
+
+### Fixed
+- `setReferralCode` / `applyCode` fall back to the user stored by
+  `identifyUser` when `appUserId` isn't passed. Without it the backend
+  rejected free-access codes with `MISSING_USER_ID`.
+- `setReferralCode` stores the code (and the `manual_entry` attribution record)
+  and calls `revenueCatAttributeSetter` only after the backend answers
+  `success == true`, using the canonical code it returns. A rejected code is
+  no longer stored or tagged. Still fail-soft.
+- `InfluToReferralCodeInput`: the field no longer drops `_` (codes allow
+  `[A-Z0-9_-]`), and `onApplied` fires only when the code was actually applied
+  (`applied == true`), not merely valid.
+- Automatic purchase capture: `Transaction.updates` does not deliver purchases
+  the app completes itself via `product.purchase()`, so those were only
+  reported at the next launch's back-sync. While observation is running, the
+  back-sync now also re-runs when the app becomes active (iOS/tvOS/visionOS;
+  no-op on macOS/watchOS). Deduped locally; reports stay idempotent
+  server-side.
+
+### Changed
+- CocoaPods podspec version brought in line with the SDK (`1.1.1`; it was
+  still `1.0.0`).
+
 ## [1.1.0] - 2026-08-09
 
 ### Fixed

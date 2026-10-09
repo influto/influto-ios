@@ -115,7 +115,8 @@ public struct InfluToReferralCodeInput: View {
     }
 
     private func onCodeChange(_ raw: String) {
-        let normalized = String(raw.uppercased().filter { $0.isLetter || $0.isNumber || $0 == "-" })
+        // Codes are [A-Z0-9_-]: keep letters, digits, '-' and '_'.
+        let normalized = String(raw.uppercased().filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
         if normalized != raw { code = normalized; return }
         debounce?.cancel()
         guard normalized.count >= 3 else { status = .idle; return }
@@ -144,7 +145,8 @@ public struct InfluToReferralCodeInput: View {
         Task { @MainActor in
             let r = await InfluTo.applyCode(c, appUserId: appUserId)
             result = r
-            if r.applied == true || r.valid {
+            // Only a code the server actually applied counts — `valid` alone is not enough.
+            if r.applied == true {
                 onApplied?(r)
                 status = .applied
             } else {

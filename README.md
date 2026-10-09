@@ -83,6 +83,11 @@ the app is store-direct, the SDK starts observing StoreKit 2 `Transaction.update
 existing purchases. RevenueCat apps are unaffected (it stays silent). Set
 `config.autoCapture = false` to manage reporting yourself.
 
+`Transaction.updates` does not deliver purchases your app completes itself via
+`product.purchase()`, so while observation is running the SDK also re-runs the back-sync each time
+the app becomes active (iOS/tvOS/visionOS; deduped, so already-reported transactions are skipped).
+Calling `reportPurchase(verification:)` right after `purchase()` is still the most immediate path.
+
 To drive it manually:
 
 ```swift
