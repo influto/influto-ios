@@ -100,7 +100,7 @@ public enum InfluTo {
 /// The actor that owns all SDK state. Actor isolation serializes access to the config,
 /// HTTP client, and storage (the modern replacement for a module-level singleton).
 public actor InfluToActor {
-    private let sdkVersion = "1.1.1"
+    private let sdkVersion = "1.2.0"
 
     private var config: InfluToConfig?
     private var api: APIClient?
