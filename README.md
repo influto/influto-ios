@@ -1,10 +1,10 @@
 # InfluTo iOS SDK (Swift)
 
-Influencer attribution + store-direct purchase validation for iOS. **Zero dependencies**
+Influencer attribution + store-direct purchase validation for iOS and macOS. **Zero dependencies**
 (URLSession + UserDefaults + StoreKit 2 + CryptoKit, all platform frameworks). Mirrors the
 [InfluTo React Native SDK](https://github.com/influto/influto-react-native) and the [canonical contract](./CONTRACT.md).
 
-- **iOS 16+** · Swift (compiles in Swift 5 or 6 mode) · async/await · actor singleton
+- **iOS 16+ · macOS 13+** (native AppKit / SwiftUI Mac App Store apps) · Swift (compiles in Swift 5 or 6 mode) · async/await · actor singleton
 - **SPM-first** (CocoaPods provided as a fallback; CocoaPods trunk goes read-only Dec 2026)
 
 ## Prerequisites
@@ -100,6 +100,22 @@ await InfluTo.stopPurchaseObservation()         // stop the live observation
 > `enableAutoPurchaseCapture` / `disableAutoPurchaseCapture`; on iOS they are
 > `startPurchaseObservation()` / `stopPurchaseObservation()`.
 
+## macOS (Mac App Store)
+
+Native macOS apps (AppKit or SwiftUI, not Catalyst) use the same package and the same API —
+`initialize`, `applyCode` / `InfluToReferralCodeInput`, `reportPurchase(verification:)`, automatic
+purchase capture. A Mac App Store StoreKit 2 transaction is reported and verified exactly like an iOS
+one:
+
+- In the dashboard, set the app's **bundle ID** and **App Store app ID** (Mac App Store apps have one
+  too) and choose Apple store-direct validation. The wire `platform` stays `"ios"` on every Apple
+  platform — it names the Apple store, not the OS.
+- Purchases of non-consumables are one-time purchases (one-time commission).
+- Automatic capture re-runs its back-sync when the Mac app becomes active
+  (`NSApplication.didBecomeActiveNotification`), as it does on iOS.
+- Attribution on the Mac: use manual code entry (`applyCode` or `InfluToReferralCodeInput`) before the
+  purchase. Link-click matching is not supported for Mac installs yet.
+
 ## Build & test — **requires macOS + Xcode**
 
 > ⚠️ Swift-for-iOS cannot be compiled on Windows/WSL2. Build on a **Mac** (or a cloud-Mac CI
@@ -107,7 +123,7 @@ await InfluTo.stopPurchaseObservation()         // stop the live observation
 
 ```bash
 swift build                       # compile (macOS slice)
-swift test                        # unit tests (pure helpers; networking via URLProtocol)
+swift test                        # unit tests on macOS
 
 # Run unit tests on the iOS Simulator:
 xcodebuild test -scheme InfluTo \

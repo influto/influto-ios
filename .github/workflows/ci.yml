@@ -32,6 +32,10 @@ jobs:
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
             -skipPackagePluginValidation
 
+      # Native macOS (Mac App Store apps): the runner itself is the destination.
+      - name: Build & test on macOS
+        run: swift test
+
   sample:
     name: Sample app + StoreKit E2E
     # The macOS sample build is expensive (10x minutes on private repos). Run it on

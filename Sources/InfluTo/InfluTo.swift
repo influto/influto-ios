@@ -109,7 +109,7 @@ public actor InfluToActor {
     /// Retained `Transaction.updates` observation task (opt-in auto-capture). `nil` unless
     /// `startPurchaseObservation()` is active. Actor-isolated so start/stop are serialized.
     private var observationTask: Task<Void, Never>?
-    /// "App became active" observer token while auto-capture runs (iOS/tvOS/visionOS only).
+    /// "App became active" observer token while auto-capture runs (all platforms but watchOS).
     /// `Transaction.updates` does not deliver purchases completed in-app via
     /// `product.purchase()`, so the back-sync is re-run on activation to report them without
     /// waiting for the next launch. Reports are deduped locally and idempotent server-side.
@@ -470,22 +470,33 @@ public actor InfluToActor {
         log("purchase observation stopped")
     }
 
+    /// The notification the platform posts when the app becomes active, or `nil` where there
+    /// is no such app lifecycle (watchOS). Raw values of `UIApplication.didBecomeActiveNotification`
+    /// (iOS, iPadOS, tvOS, visionOS, Mac Catalyst) and `NSApplication.didBecomeActiveNotification`
+    /// (native macOS), spelled out so this actor never references a main-actor-isolated UIKit /
+    /// AppKit symbol (and needs neither import).
+    static var appDidBecomeActiveNotification: Notification.Name? {
+        #if canImport(UIKit) && !os(watchOS)
+        return Notification.Name("UIApplicationDidBecomeActiveNotification")
+        #elseif os(macOS)
+        return Notification.Name("NSApplicationDidBecomeActiveNotification")
+        #else
+        return nil
+        #endif
+    }
+
     /// Re-run the back-sync whenever the app becomes active, while observation is on. No-op on
-    /// platforms without UIKit's app lifecycle (macOS, watchOS).
+    /// platforms without an app-activation notification (watchOS).
     @available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, *)
     private func startForegroundResync() {
-        #if canImport(UIKit) && !os(watchOS)
-        guard didBecomeActiveObserver == nil else { return }
-        // The raw value of `UIApplication.didBecomeActiveNotification`, spelled out so this actor
-        // never references a main-actor-isolated UIKit symbol (and needs no UIKit import).
-        let didBecomeActive = Notification.Name("UIApplicationDidBecomeActiveNotification")
+        guard didBecomeActiveObserver == nil,
+              let didBecomeActive = Self.appDidBecomeActiveNotification else { return }
         didBecomeActiveObserver = NotificationCenter.default.addObserver(
             forName: didBecomeActive, object: nil, queue: nil
         ) { [weak self] _ in
             guard let self else { return }
             Task { await self.foregroundResync() }
         }
-        #endif
     }
 
     private func stopForegroundResync() {

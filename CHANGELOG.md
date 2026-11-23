@@ -4,6 +4,22 @@ All notable changes to the InfluTo iOS SDK are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Native macOS (Mac App Store apps) documented in the README; CI also runs the
+  unit tests on macOS (`swift test`).
+
+### Fixed
+- Automatic purchase capture on native macOS: the back-sync now also re-runs
+  when the app becomes active (`NSApplication.didBecomeActiveNotification`),
+  so purchases the app completes itself are reported without waiting for the
+  next launch. Previously a no-op on macOS.
+- `/sdk/track-install` on macOS (and watchOS) now reports `os_version`
+  (from `ProcessInfo`), and `device_model` "Mac" on macOS.
+- watchOS: the package didn't compile (`UIDevice` is unavailable on watchOS);
+  it now builds.
+
 ## [1.1.1] - 2026-10-09
 
 ### Fixed

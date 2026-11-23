@@ -1,4 +1,9 @@
 import XCTest
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 @testable import InfluTo
 
 final class InfluToTests: XCTestCase {
@@ -52,6 +57,30 @@ final class InfluToTests: XCTestCase {
         XCTAssertTrue(Storage().isPurchaseSent("1000000123"))
         XCTAssertFalse(Storage().isPurchaseSent("9999999999"))
         s.remove([Storage.sentPurchases])
+    }
+
+    /// The spelled-out activation notification must be the platform's real one, so the
+    /// auto-capture foreground back-sync also runs on native macOS.
+    func testAppDidBecomeActiveNotificationMatchesPlatform() {
+        #if canImport(UIKit) && !os(watchOS)
+        XCTAssertEqual(InfluToActor.appDidBecomeActiveNotification, UIApplication.didBecomeActiveNotification)
+        #elseif os(macOS)
+        XCTAssertEqual(InfluToActor.appDidBecomeActiveNotification, NSApplication.didBecomeActiveNotification)
+        #else
+        XCTAssertNil(InfluToActor.appDidBecomeActiveNotification)
+        #endif
+    }
+
+    @MainActor
+    func testTrackInstallBodyOnThisPlatform() {
+        let body = DeviceInfo.trackInstallBody()
+        XCTAssertEqual(body["platform"], "ios", "Apple platforms share the 'ios' wire key")
+        XCTAssertEqual(body["device_brand"], "Apple")
+        XCTAssertFalse((body["os_version"] ?? "").isEmpty, "os_version is reported on every platform")
+        #if os(macOS)
+        XCTAssertEqual(body["device_model"], "Mac")
+        XCTAssertNil(body["device_id"], "macOS has no identifierForVendor; the install UUID is added by the caller")
+        #endif
     }
 
     func testPurchaseSyncResultShape() {
